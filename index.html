@@ -1210,14 +1210,15 @@ function App() {
     showToast('Cable deleted', 'info');
   };
 
-  const handleBulkBackendScope = async (inScope, targetIdf = 'ALL') => {
+  const handleBulkBackendScope = async (inScope, targetSystem = 'ALL') => {
     if (!isAdmin) return;
+    const isTarget = (c) => targetSystem === 'ALL' || getSystemCode(c) === targetSystem;
     const updatedList = cables.map((c) => {
-      if (targetIdf !== 'ALL' && c.idf !== targetIdf) return c;
+      if (!isTarget(c)) return c;
       return {
         ...c,
         backendInScope: inScope,
-        backendDone: inScope ? c.backendDone : false,
+        backendDone: inScope ? Boolean(c.backendDone) : false,
         updatedBy: techName,
         updatedAt: new Date().toISOString()
       };
@@ -1227,7 +1228,7 @@ function App() {
     if (user && syncStatus === 'live') {
       try {
         const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'cables');
-        const affected = updatedList.filter((c) => targetIdf === 'ALL' || c.idf === targetIdf);
+        const affected = updatedList.filter(isTarget);
         for (let i = 0; i < affected.length; i += 400) {
           const batch = writeBatch(db);
           affected.slice(i, i + 400).forEach((item) => {
@@ -1243,7 +1244,7 @@ function App() {
       } catch (err) {}
     }
     showToast(
-      `Backend scope set to ${inScope ? 'IN SCOPE' : 'OUT OF SCOPE'} (${targetIdf})`
+      `Backend scope set to ${inScope ? 'IN SCOPE' : 'OUT OF SCOPE'} (${targetSystem === 'ALL' ? 'All Systems' : targetSystem})`
     );
   };
 
@@ -3097,10 +3098,10 @@ function App() {
         {/* ================================================================== */}
         {showBulkScopeModal && isAdmin && (
           <BulkScopeModal
-            idfs={uniqueIdfs}
+            systems={systemSummary}
             onClose={() => setShowBulkScopeModal(false)}
-            onApply={(inScope, targetIdf) => {
-              handleBulkBackendScope(inScope, targetIdf);
+            onApply={(inScope, targetSystem) => {
+              handleBulkBackendScope(inScope, targetSystem);
               setShowBulkScopeModal(false);
             }}
           />
@@ -4199,9 +4200,14 @@ function RedFlagModal({ cable, onClose, onSave }) {
   );
 }
 
-function BulkScopeModal({ idfs, onClose, onApply }) {
+function BulkScopeModal({ systems, onClose, onApply }) {
   const [inScope, setInScope] = useState(true);
-  const [targetIdf, setTargetIdf] = useState('ALL');
+  const [targetSystem, setTargetSystem] = useState('ALL');
+
+  const selected = systems.filter((s) => targetSystem === 'ALL' || s.code === targetSystem);
+  const totalItems = selected.reduce((sum, s) => sum + s.total, 0);
+  const scopedItems = selected.reduce((sum, s) => sum + s.backendScopedCount, 0);
+  const doneItems = selected.reduce((sum, s) => sum + s.backendCompleted, 0);
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
@@ -4218,19 +4224,22 @@ function BulkScopeModal({ idfs, onClose, onApply }) {
 
         <div className="p-5 space-y-4 text-xs">
           <div>
-            <label className="block font-bold text-slate-700 mb-1">Apply to IDF Scope</label>
+            <label className="block font-bold text-slate-700 mb-1">Apply to System</label>
             <select
-              value={targetIdf}
-              onChange={(e) => setTargetIdf(e.target.value)}
+              value={targetSystem}
+              onChange={(e) => setTargetSystem(e.target.value)}
               className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg font-semibold"
             >
-              <option value="ALL">All IDFs (Entire Project Schedule)</option>
-              {idfs.map((i) => (
-                <option key={i} value={i}>
-                  {i} Only
+              <option value="ALL">All Systems (Entire Project Schedule)</option>
+              {systems.map((s) => (
+                <option key={s.code} value={s.code}>
+                  {s.name} ({s.code}) Only
                 </option>
               ))}
             </select>
+            <div className="text-[11px] text-slate-500 mt-1">
+              Currently {scopedItems} of {totalItems} items have Backend in scope.
+            </div>
           </div>
 
           <div className="space-y-2">
@@ -4242,9 +4251,9 @@ function BulkScopeModal({ idfs, onClose, onApply }) {
                 className="mt-0.5 accent-purple-600"
               />
               <div>
-                <div className="font-bold text-slate-900">Backend Work IN SCOPE (4 Tasks)</div>
+                <div className="font-bold text-slate-900">Backend Work IN SCOPE</div>
                 <div className="text-[11px] text-slate-500">
-                  Requires Pulling + Termination + Field Device + Backend Work to mark COMPLETED.
+                  Backend Work must also be done to mark items COMPLETED.
                 </div>
               </div>
             </label>
@@ -4257,13 +4266,19 @@ function BulkScopeModal({ idfs, onClose, onApply }) {
                 className="mt-0.5 accent-purple-600"
               />
               <div>
-                <div className="font-bold text-slate-900">Backend Work OUT OF SCOPE (3 Tasks)</div>
+                <div className="font-bold text-slate-900">Backend Work OUT OF SCOPE</div>
                 <div className="text-[11px] text-slate-500">
-                  Marks COMPLETED once Pulling + Termination + Field Device Installation are done.
+                  Backend Work is ignored when marking items COMPLETED.
                 </div>
               </div>
             </label>
           </div>
+
+          {!inScope && doneItems > 0 && (
+            <div className="p-2.5 rounded-lg bg-red-50 border border-red-300 text-red-800 font-semibold">
+              Warning: this will clear {doneItems} completed Backend tick(s).
+            </div>
+          )}
         </div>
 
         <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
@@ -4274,7 +4289,7 @@ function BulkScopeModal({ idfs, onClose, onApply }) {
             Cancel
           </button>
           <button
-            onClick={() => onApply(inScope, targetIdf)}
+            onClick={() => onApply(inScope, targetSystem)}
             className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold cursor-pointer"
           >
             Apply Scope
