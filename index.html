@@ -785,6 +785,7 @@ function App() {
   const [selectedCable, setSelectedCable] = useState(null);
   const [flagModalCable, setFlagModalCable] = useState(null);
   const [showReportModal, setShowReportModal] = useState(false);
+  const [reportMode, setReportMode] = useState('ALL'); // 'ALL' | 'FLAGS'
   const [showBulkScopeModal, setShowBulkScopeModal] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showConfirmSeedModal, setShowConfirmSeedModal] = useState(false);
@@ -1870,6 +1871,15 @@ function App() {
                     <span className="hidden sm:inline">Export CSV</span>
                   </button>
                 )}
+                <button
+                  onClick={() => handleExportReadableCSV(flaggedCables, 'ELV_Red_Flags')}
+                  disabled={flaggedCables.length === 0}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-700 hover:bg-red-600 text-white text-xs font-medium transition whitespace-nowrap cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
+                  title="Export only Red Flag items"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Red Flags CSV ({flaggedCables.length})</span>
+                </button>
                 {isAdmin && (
                   <button
                     onClick={() => setShowConfirmSeedModal(true)}
@@ -3056,6 +3066,7 @@ function App() {
             onExportTemplate={() =>
               handleExportReadableCSV(cables.slice(0, 5), 'ELV_Editable_Template_Sample')
             }
+            onExportFlags={() => handleExportReadableCSV(flaggedCables, 'ELV_Red_Flags')}
             onImportValidated={(records, mode) => {
               handleApplyImportedRecords(records, mode);
               setShowDataExchangeModal(false);
@@ -3170,6 +3181,8 @@ function App() {
             idfSummary={idfSummary}
             floorSummary={floorSummary}
             generatedBy={techName}
+            reportMode={reportMode}
+            onModeChange={setReportMode}
             onClose={() => setShowReportModal(false)}
           />
         )}
@@ -3188,7 +3201,7 @@ function App() {
             />
             <div>
               <h1 className="text-xl font-extrabold uppercase tracking-tight">
-                {branding.projectCode ? `${branding.projectCode} — ` : ''}{branding.projectTitle || DEFAULT_PROJECT_INFO.projectTitle} — Installation Progress Report
+                {branding.projectCode ? `${branding.projectCode} — ` : ''}{branding.projectTitle || DEFAULT_PROJECT_INFO.projectTitle} — {reportMode === 'FLAGS' ? 'Red Flag Report' : 'Installation Progress Report'}
               </h1>
               {branding.location && (
                 <div className="text-[11px] font-semibold text-slate-700 mt-0.5">
@@ -3196,7 +3209,7 @@ function App() {
                 </div>
               )}
               <p className="text-slate-600 mt-0.5">
-                {branding.description || 'Master Cable Pulling, Termination, Field Device & Backend Schedule'} ({cables.length} Items)
+                {branding.description || 'Master Cable Pulling, Termination, Field Device & Backend Schedule'} ({reportMode === 'FLAGS' ? flaggedCables.length : cables.length} Items)
               </p>
             </div>
           </div>
@@ -3206,6 +3219,8 @@ function App() {
           </div>
         </div>
 
+        {reportMode === 'ALL' && (
+          <>
         {/* KPI Summary Grid */}
         <div className="grid grid-cols-4 gap-2 border border-slate-300 rounded p-2.5 bg-slate-50">
           <div>
@@ -3384,13 +3399,17 @@ function App() {
           </table>
         </div>
 
+          </>
+        )}
+
         {/* Detailed Cable Schedule */}
         <div>
           <h2 className="font-bold text-sm mb-1.5 uppercase">
-            Detailed Schedule
-            {filteredCables.length !== cables.length
-              ? ` (Filtered: ${filteredCables.length} of ${cables.length} items; summaries above cover all items)`
-              : ` (${cables.length} items)`}
+            {reportMode === 'FLAGS'
+              ? `Red Flag Items (${flaggedCables.length} items)`
+              : filteredCables.length !== cables.length
+              ? `Detailed Schedule (Filtered: ${filteredCables.length} of ${cables.length} items; summaries above cover all items)`
+              : `Detailed Schedule (${cables.length} items)`}
           </h2>
           <table className="w-full border-collapse border border-slate-300 text-[10px]">
             <thead>
@@ -3409,7 +3428,7 @@ function App() {
               </tr>
             </thead>
             <tbody>
-              {filteredCables.map((c) => {
+              {(reportMode === 'FLAGS' ? flaggedCables : filteredCables).map((c) => {
                 const st = evaluateCableStatus(c);
                 return (
                   <tr key={c.id} className={c.isRedFlag ? 'bg-red-50' : ''}>
@@ -3772,6 +3791,7 @@ function AdminDataExchangeModal({
   onClose,
   onExportFull,
   onExportTemplate,
+  onExportFlags,
   onImportValidated
 }) {
   const [parsedRows, setParsedRows] = useState(null);
@@ -3947,6 +3967,15 @@ function AdminDataExchangeModal({
               >
                 <Download className="w-4 h-4" />
                 <span>Download Full Schedule CSV ({cables.length} rows)</span>
+              </button>
+              <button
+                type="button"
+                onClick={onExportFlags}
+                disabled={!cables.some((c) => c.isRedFlag)}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
+              >
+                <Download className="w-4 h-4" />
+                <span>Download Red Flags Only CSV ({cables.filter((c) => c.isRedFlag).length} rows)</span>
               </button>
               <button
                 type="button"
@@ -4444,7 +4473,7 @@ function AddCableModal({ nextSlNo, onClose, onAdd }) {
   );
 }
 
-function PdfReportModal({ branding, stats, systemSummary = [], idfSummary, onClose }) {
+function PdfReportModal({ branding, stats, systemSummary = [], idfSummary, reportMode, onModeChange, onClose }) {
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden">
@@ -4477,10 +4506,34 @@ function PdfReportModal({ branding, stats, systemSummary = [], idfSummary, onClo
             </div>
           </div>
 
+          <div className="space-y-2">
+            <div className="font-bold text-slate-700">Report Type</div>
+            <label className="flex items-center gap-2.5 p-3 rounded-xl border border-slate-200 cursor-pointer">
+              <input
+                type="radio"
+                checked={reportMode === 'ALL'}
+                onChange={() => onModeChange('ALL')}
+                className="accent-emerald-600"
+              />
+              <span className="font-bold text-slate-900">Full Progress Report</span>
+            </label>
+            <label className="flex items-center gap-2.5 p-3 rounded-xl border border-slate-200 cursor-pointer">
+              <input
+                type="radio"
+                checked={reportMode === 'FLAGS'}
+                onChange={() => onModeChange('FLAGS')}
+                className="accent-red-600"
+              />
+              <span className="font-bold text-red-700">Red Flag Items Only ({stats.redFlags})</span>
+            </label>
+          </div>
+
           <p className="text-slate-500 leading-relaxed">
             Clicking <strong>Print / Save as PDF</strong> opens your browser print dialog formatted
-            for A4 paper with executive KPIs, IDF-wise, Floor-wise & System-wise progress tables, the detailed
-            schedule with Red Flag remarks, and engineer/consultant sign-off blocks.
+            for A4 paper.{' '}
+            {reportMode === 'FLAGS'
+              ? 'The report lists all Red Flag items with their blocker reasons and sign-off blocks.'
+              : 'The report includes executive KPIs, IDF-wise, Floor-wise & System-wise progress tables, the detailed schedule with Red Flag remarks, and sign-off blocks.'}
           </p>
         </div>
 
@@ -4496,7 +4549,8 @@ function PdfReportModal({ branding, stats, systemSummary = [], idfSummary, onClo
               onClose();
               setTimeout(() => window.print(), 150);
             }}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold cursor-pointer"
+            disabled={reportMode === 'FLAGS' && stats.redFlags === 0}
+            className="disabled:opacity-45 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold cursor-pointer"
           >
             <Printer className="w-4 h-4" />
             <span>Print / Save as PDF</span>
